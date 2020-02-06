@@ -1,16 +1,30 @@
-target=[1,0,0,1,0,0,0];
-link_length=[1, 0.5, 0.3];
-
-min_roll=degtorad([-90,-90,-90]);
-max_roll=degtorad([90,90,90]);
-min_pitch=degtorad([-90,-90,-90]);
-max_pitch=degtorad([90,90,90]);
-min_yaw=degtorad([-90,-90,-90]);
-max_yaw=degtorad([90,90,90]);
-
 obstacles=[
     1, 1, 1, 0.1;
     -1,-1,-1,0.1
     ];
 
-[r, p, y] = part1(target, link_length, min_roll, max_roll, min_pitch, max_pitch, min_yaw, max_yaw, obstacles)
+for i = 1:1
+    n = randi(3) + 1;
+    link_length = rand([1,n]);   
+    
+    min_roll = deg2rad(ones([1, n]) * -180);
+    min_pitch = deg2rad(ones([1, n]) * -180);
+    min_yaw = deg2rad(ones([1, n]) * -180);
+    max_roll = deg2rad(ones([1, n]) * 180);
+    max_pitch = deg2rad(ones([1, n]) * 180);
+    max_yaw = deg2rad(ones([1, n]) * 180);
+    
+    r = (rand([n,1]) * 2 - 1).*(max_roll - min_roll)' + min_roll';
+    p = (rand([n,1]) * 2 - 1).*(max_pitch - min_pitch)' + min_pitch';
+    y = (rand([n,1]) * 2 - 1).*(max_yaw - min_yaw)' + min_yaw';
+    target = forward(link_length, r, p, y);
+    
+    plot_robot(obstacles, target, link_length, r, p, y);
+        
+    [r_p, p_p, y_p] = part1(target, link_length, min_roll, max_roll, min_pitch, max_pitch, min_yaw, max_yaw, obstacles);
+    reached = forward(link_length, r_p, p_p, y_p);
+
+    fprintf("Pose Error: %f\n", objective(target, reached));
+    fprintf("Joint Error: %f\n", norm([r p y] - [r_p p_p y_p], 'fro'));
+end
+

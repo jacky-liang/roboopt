@@ -17,8 +17,26 @@ function [r, p, y] = part1(target, link_length, min_roll, max_roll, min_pitch, m
 % Your code goes here.
 [o, n] = size(link_length);
 
-r = zeros(n, 1);
-p = zeros(n, 1);
-y = zeros(n, 1);
+x0 = zeros(n, 3);
+lb = [min_roll min_pitch min_yaw];
+ub = [max_roll max_pitch max_yaw];
+fun = @(x) objective(forward(link_length, x(:,1), x(:,2), x(:,3)), target);
+
+A = zeros(n * 3);
+b = ones(n * 3, 1) * 1000;
+Aeq = zeros(n * 3);
+beq = zeros(n * 3, 1);
+lb = [min_roll min_pitch min_yaw];
+ub = [max_roll max_pitch max_yaw];
+
+x = fmincon(fun, x0, A, b, Aeq, beq, lb, ub);
+
+if fun(x) > 0.01
+    disp("Could not reach target exactly.");
+end
+
+r = x(:,1);
+p = x(:,2);
+y = x(:,3);
 
 end
