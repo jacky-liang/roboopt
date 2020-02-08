@@ -24,7 +24,7 @@ for i = 1:1
     [r_p, p_p, y_p] = part1(target, link_length, min_roll, max_roll, min_pitch, max_pitch, min_yaw, max_yaw, obstacles);
     reached = forward(link_length, r_p, p_p, y_p);
 
-    fprintf("Pose Error: %f\n", objective(target, reached));
+    fprintf("Pose Error: %f\n", pose_err(target, reached));
     fprintf("Joint Error: %f\n", norm([r p y] - [r_p p_p y_p], 'fro'));
 end
 

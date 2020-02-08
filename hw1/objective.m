@@ -1,17 +1,36 @@
-function [obj] = objective(target, actual)
+function [obj] = objective(target, link_length, obstacles, x(:,1), x(:,2), x(:,3))
 
-delta_tra = norm(target(1:3) - actual(1:3));
+[o, n] = size(link_length);
+[obs, o] = size(obstacles);
 
-actual_quat = quaternion(actual(4), actual(5), actual(6), actual(7));
-target_quat = quaternion(target(4), target(5), target(6), target(7));
+links = forward_links(link_length, r, p, y);
 
-actual_R = quat2rotm(actual_quat);
-target_R = quat2rotm(target_quat);
-delta_R = actual_R * target_R';
+err = pose_err(links(n, :), target);
 
-delta_aa = rotm2axang(delta_R);
-delta_angle = delta_aa(4);
+min_dists = zeros((n, 1));
 
-obj = delta_tra^2 + delta_angle^2;
+for i = 1:n-1
+    s0 = links(i, :);
+    s1 = links(i + 1, :);
+
+    s01 = s1 - s0;
+    s01_norm_squared = s01 * s01;
+
+    dists = zeros((obs, 1));
+
+    for j = 1:obs
+        p = obstacles(j, 1:3);
+        r = obstacles(j, 4);
+
+        t_hat = (p - s0) * s01 / s01_norm_squared;
+        t_star = min(max(t_hat, 0), 1);
+
+        dists(j) = norm(s1 + t_star * s01 - p) - r;
+    end
+
+    min_dists(i) = min(dists);
+end
+
+obj = err - min(min_dists);
 
 end

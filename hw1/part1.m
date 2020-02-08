@@ -20,7 +20,7 @@ function [r, p, y] = part1(target, link_length, min_roll, max_roll, min_pitch, m
 x0 = zeros(n, 3);
 lb = [min_roll min_pitch min_yaw];
 ub = [max_roll max_pitch max_yaw];
-fun = @(x) objective(forward(link_length, x(:,1), x(:,2), x(:,3)), target);
+fun = @(x) objective(target, link_length, obstacles, x(:,1), x(:,2), x(:,3));
 
 A = zeros(n * 3);
 b = ones(n * 3, 1) * 1000;
