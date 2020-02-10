@@ -32,6 +32,6 @@ for i = 1:n1-1
     min_dists(i) = min(dists);
 end
 
-obj = err - 0.2 * min(min_dists);
+obj = err - 0.4 * min(min_dists);
 
 end

@@ -17,19 +17,23 @@ function [r, p, y] = part1(target, link_length, min_roll, max_roll, min_pitch, m
 % Your code goes here.
 [o, n] = size(link_length);
 
-x0 = zeros(n, 3);
+r0 = (rand([n,1]) * 2 - 1).*(max_roll - min_roll)' + min_roll';
+p0 = (rand([n,1]) * 2 - 1).*(max_pitch - min_pitch)' + min_pitch';
+y0 = (rand([n,1]) * 2 - 1).*(max_yaw - min_yaw)' + min_yaw';
+x0 = [r0, p0, y0];
+
 lb = [min_roll min_pitch min_yaw];
 ub = [max_roll max_pitch max_yaw];
 fun = @(x) objective(target, link_length, obstacles, x(:,1), x(:,2), x(:,3));
 
-A = zeros(n * 3);
-b = ones(n * 3, 1) * 1000;
-Aeq = zeros(n * 3);
-beq = zeros(n * 3, 1);
 lb = [min_roll min_pitch min_yaw];
 ub = [max_roll max_pitch max_yaw];
 
-x = fmincon(fun, x0, A, b, Aeq, beq, lb, ub);
+options = optimoptions('fmincon','Algorithm','active-set');
+x = fmincon(fun, x0, [], [], [], [], lb, ub, [], options);
+
+% CMA-ES
+% x = cmaes(fun, x0, lb, ub);
 
 if fun(x) > 0.01
     disp("Could not reach target exactly.");
@@ -38,5 +42,7 @@ end
 r = x(:,1);
 p = x(:,2);
 y = x(:,3);
+
+
 
 end
