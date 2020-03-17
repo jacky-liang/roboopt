@@ -1,2 +1,7 @@
 *.m~
 *.ipynb_checkpoints
+*build
+*devel
+.vscode
+.catkin_workspace
+src/CMakeLists.txt
