@@ -7,6 +7,8 @@ CS = {
     'theta_lim': np.array([-np.pi, np.pi]),
     'xp_lim': np.array([-15, 15]),
     'yp_lim': np.array([-15, 15]),
+    'xyp_lims_lo': np.array([-15, -15]),
+    'xyp_lims_hi': np.array([15, 15]),
     'num_waypoints': 10,
     'waypoint_tol': 0.2,
     'angle_tol': 0.2,
