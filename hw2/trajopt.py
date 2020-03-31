@@ -8,7 +8,9 @@ from torch_utils import from_numpy, get_numpy, ones, tensor, zeros_like
 
 from tensorboardX import SummaryWriter
 from tqdm import tqdm, trange
+
 from constants import CS
+from adam import Adam
 
 
 def cubic_hermite(ts, x0, x1, v0, v1):
@@ -48,6 +50,7 @@ def gen_trajs(wps, wp_speeds, n_pts):
     vs[1:-1] *= torch.unsqueeze(wp_speeds, 1)
     vs[-1] *= 1e-2
     
+    # TODO: batch this
     for i in range(1, len(wps)):
         cur_x, cur_v = wps[i - 1, :2], vs[i - 1]
         next_x, next_v = wps[i, :2], vs[i]
@@ -64,27 +67,38 @@ def gen_trajs(wps, wp_speeds, n_pts):
     return trajs, d_trajs
 
 
-def trajopt(wps, writer, n_pts=40, constraint_weights=[0.01, 1, 0.0001, 0.001, 0.1, 0.1], max_n_opts=1000):
+def trajopt(wps, writer, n_pts=40, constraint_weights=[0.01, 1, 0.0001, 0.001, 0.1, 0.1], max_n_opts=1000, lr=1e-6):
     # define params
     constraint_weights = from_numpy(np.array(constraint_weights))
-    wps_trch = tensor(wps, requires_grad=True)
-    wp_speeds = tensor(np.ones(len(wps) - 2) * 30, requires_grad=True)
-    seg_times = tensor(np.ones(len(wps) - 1) * 10, requires_grad=True)
+    wps_init = tensor(wps, requires_grad=True)
+    wp_speeds_init = tensor(np.ones(len(wps) - 2) * 30, requires_grad=True)
+    seg_times_init = tensor(np.ones(len(wps) - 1) * 10, requires_grad=True)
 
     # define bounds
     wps_delta = from_numpy(np.array([CS['waypoint_tol'], CS['waypoint_tol'], np.deg2rad(CS['angle_tol'])]))
-    wps_lo, wps_hi = wps_trch - wps_delta, wps_trch + wps_delta
+    wps_lo, wps_hi = wps_init - wps_delta, wps_init + wps_delta
 
     seg_times_lo = from_numpy(np.linalg.norm(wps[1:, :2] - wps[:-1, :2], axis=1) / CS['max_vel'])
 
-    seg_speed_lo, seg_speed_hi = from_numpy(np.array(0)), from_numpy(np.array(CS['max_vel']))
+    wp_speed_lo, wp_speed_hi = from_numpy(np.array(0)), from_numpy(np.array(CS['max_vel']))
 
     trajs_lo, trajs_hi = from_numpy(CS['xyp_lims_lo']), from_numpy(CS['xyp_lims_hi'])
 
+    # define optimizers
+    opts = {
+        'wps': Adam(wps_init.flatten(), alpha=lr, lo=wps_lo.flatten(), hi=wps_hi.flatten()),
+        'seg_times': Adam(seg_times_init, alpha=lr, lo=seg_times_lo),
+        'wp_speeds': Adam(wp_speeds_init, alpha=lr, lo=wp_speed_lo, hi=wp_speed_hi)
+    }
+
     n_opts = trange(max_n_opts)
     for n_opt in n_opts:
+        wps = opts['wps'].params.view(wps_init.shape)
+        seg_times = opts['seg_times'].params
+        wp_speeds = opts['wp_speeds'].params
+
         # compute trajs
-        trajs, d_trajs = gen_trajs(wps_trch, wp_speeds, n_pts)
+        trajs, d_trajs = gen_trajs(wps, wp_speeds, n_pts)
 
         # compute needed values
         velocities = d_trajs / torch.unsqueeze(torch.unsqueeze(seg_times, 1), 1)
@@ -121,33 +135,68 @@ def trajopt(wps, writer, n_pts=40, constraint_weights=[0.01, 1, 0.0001, 0.001, 0
         constraint_cost = constraint_costs @ constraint_weights
         loss = total_time + constraint_cost
 
-        # TODO: update params by grad
+        # Compute grad
+        grad_wps, grad_seg_times, grad_wp_speeds = grad(loss, [wps, seg_times, wp_speeds])
 
-        # TODO: project onto bounds
+        grad_wps[torch.isnan(grad_wps)] = 0
+        grad_seg_times[torch.isnan(grad_seg_times)] = 0
+        grad_wp_speeds[torch.isnan(grad_wp_speeds)] = 0
+
+        # Step optimizer
+        opts['wps'].collect_grad(grad_wps.flatten())
+        opts['seg_times'].collect_grad(grad_seg_times)
+        opts['wp_speeds'].collect_grad(grad_wp_speeds)
+
+        opts['wps'].step()
+        opts['seg_times'].step()
+        opts['wp_speeds'].step()
+
+        # log progress
+        writer.add_scalar('/costs/loss', loss, n_opt)
+        writer.add_scalar('/costs/total_time', total_time, n_opt)
+        writer.add_scalar('/costs/total_constraints', constraint_cost, n_opt)
+        writer.add_scalar('/costs/dynamics', constraint_costs[0], n_opt)
+        writer.add_scalar('/costs/steering_angle', constraint_costs[1], n_opt)
+        writer.add_scalar('/costs/acceleration', constraint_costs[2], n_opt)
+        writer.add_scalar('/costs/speed', constraint_costs[3], n_opt)
+        writer.add_scalar('/costs/traj_bounds', constraint_costs[4] + constraint_costs[5], n_opt)
+        writer.add_scalar('/grads/wps', grad_wps.mean(), n_opt)
+        writer.add_scalar('/grads/seg_times', grad_seg_times.mean(), n_opt)
+        writer.add_scalar('/grads/wp_speeds', grad_wp_speeds.mean(), n_opt)
+
+        for i in range(len(seg_times)):
+            writer.add_scalar('/seg_times/{}'.format(i), seg_times[i], n_opt)
+        for i in range(len(wp_speeds)):
+            writer.add_scalar('/wp_speeds/{}'.format(i), wp_speeds[i], n_opt)
+
+        n_opts.set_description('Loss {:.3f} | Time {:.3f} | TC {:.3f} | Dynamics {:.3f}'.format(
+            get_numpy(loss), get_numpy(total_time), get_numpy(constraint_cost), get_numpy(constraint_costs[0])
+        ))
+        n_opts.refresh()
 
     return {
-        'wps_trch': wps_trch,
-        'wp_speeds': wp_speeds,
-        'seg_times': seg_times,
-        'trajs': trajs,
-        'd_trajs': d_trajs,
-        'velocities': velocities,
-        'speeds': speeds,
-        'accelerations': accelerations,
-        'steering_angles': steering_angles,
-        'velocities_pred': velocities_pred,
-        'betas': betas,
-        'total_time': total_time,
-        'loss': loss,
-        'constraint_costs': constraint_costs,
-        'constraint_cost': constraint_cost
+        'wps': get_numpy(opts['wps'].params.view(wps_init.shape)),
+        'wp_speeds': get_numpy(opts['wp_speeds'].params),
+        'seg_times': get_numpy(opts['seg_times'].params),
+        'trajs': get_numpy(trajs),
+        'd_trajs': get_numpy(d_trajs),
+        'velocities': get_numpy(velocities),
+        'speeds': get_numpy(speeds),
+        'accelerations': get_numpy(accelerations),
+        'steering_angles': get_numpy(steering_angles),
+        'velocities_pred': get_numpy(velocities_pred),
+        'betas': get_numpy(betas),
+        'total_time': get_numpy(total_time),
+        'loss': get_numpy(loss),
+        'constraint_costs': get_numpy(constraint_costs),
+        'constraint_cost': get_numpy(constraint_cost)
     }
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--logdir', '-l', type=str, default='outs')
-    parser.add_argument('--tag', type=str, required=True)
+    parser.add_argument('--tag', '-t', type=str, required=True)
     args = parser.parse_args()
 
     wps = np.array([
@@ -164,7 +213,13 @@ if __name__ == "__main__":
             [-9.2515838 ,  6.51287078, -0.61068366]
     ])
 
-    writer = SummaryWriter(log_dir=os.path.join(args.logdir, args.tag))
-    res = trajopt(wps, writer)
+    writer = SummaryWriter(log_dir=os.path.join(args.logdir, 'tb', args.tag))
+    res = trajopt(wps, writer,
+        n_pts=20, 
+        # dynamics, steering angle, acceleration, speed, traj bounds
+        constraint_weights=[10, 1, 0.01, 0.001, 0.1, 0.1], 
+        max_n_opts=100000, 
+        lr=1e-2
+    )
 
     import IPython; IPython.embed(); exit(0)

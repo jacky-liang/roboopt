@@ -61,6 +61,14 @@ def batch_apply(f, X):
     return torch.stack([f(x) for x in X])
 
 
+def clip(x, lo=None, hi=None):
+    if lo is not None:
+        x = torch.relu(x - lo) + lo
+    if hi is not None:
+        x = -torch.relu(-x + hi) + hi
+    return x
+
+
 """
 GPU wrappers from 
 https://github.com/vitchyr/rlkit/blob/master/rlkit/torch/pytorch_util.py
