@@ -15,7 +15,7 @@ from constants import CS
 from adam import Adam
 
 
-def plot_trajs(trajs, d_trajs, title='', save=None, show=False):
+def plot_trajs(wps, trajs, d_trajs, title='', save=None, show=False):
     plt.figure(figsize=(15, 15))
     ax = plt.gca()
 
@@ -87,14 +87,14 @@ def cubic_hermite_d(ts, x0, x1, v0, v1):
     return H0.reshape(-1, 1) * x0 + H1.reshape(-1, 1) * v0 + H2.reshape(-1, 1) * v1 + H3.reshape(-1, 1) * x1
 
 
-def gen_trajs(wps, wp_speeds, n_pts):
+def gen_trajs(wps, wp_speeds, init_vel, n_pts):
     trajs = []
     d_trajs = []
 
     ts = from_numpy(np.linspace(0, 1, n_pts))
     
     vs = torch.stack([torch.cos(wps[:,2]), torch.sin(wps[:,2])]).transpose(0, 1)
-    vs[0] *= 1e-2
+    vs[0] = init_vel
     vs[1:-1] *= torch.unsqueeze(wp_speeds, 1)
     vs[-1] *= 1e-2
     
@@ -115,8 +115,9 @@ def gen_trajs(wps, wp_speeds, n_pts):
     return trajs, d_trajs
 
 
-def trajopt(wps, writer, n_pts=40, constraint_weights=[0.01, 1, 0.0001, 0.001, 0.1, 0.1], max_n_opts=1000, lr=1e-6):
+def trajopt(wps, writer, init_vel=[0, 0.01], n_pts=40, constraint_weights=[0.01, 1, 0.0001, 0.001, 0.1, 0.1], max_n_opts=1000, lr=1e-6):
     # define params
+    init_vel = from_numpy(np.array(init_vel))
     constraint_weights = from_numpy(np.array(constraint_weights))
     wps_init = tensor(wps, requires_grad=True)
     wp_speeds_init = tensor(np.ones(len(wps) - 2) * 30, requires_grad=True)
@@ -143,7 +144,7 @@ def trajopt(wps, writer, n_pts=40, constraint_weights=[0.01, 1, 0.0001, 0.001, 0
         wp_speeds = opts['wp_speeds'].params
 
         # compute trajs
-        trajs, d_trajs = gen_trajs(wps, wp_speeds, n_pts)
+        trajs, d_trajs = gen_trajs(wps, wp_speeds, init_vel, n_pts)
         if n_opt == 0:
             trajs_init, d_trajs_init = get_numpy(trajs), get_numpy(d_trajs)
 
@@ -153,7 +154,7 @@ def trajopt(wps, writer, n_pts=40, constraint_weights=[0.01, 1, 0.0001, 0.001, 0
         speeds = torch.norm(velocities, dim=2)
         accelerations = (speeds[:, 1:] - speeds[:, :-1]) / torch.unsqueeze(seg_times, 1) * n_pts
 
-        angles = torch.atan2(trajs[:,:,1], trajs[:,:,0])
+        angles = torch.atan2(d_trajs[:,:,1], d_trajs[:,:,0])
         betas = torch.asin(torch.tanh(CS['wheelbase'] / 2 * angles / speeds))
         steering_angles = torch.atan(2 * torch.tan(betas))
 
@@ -270,12 +271,12 @@ if __name__ == "__main__":
     res = trajopt(wps, writer,
         n_pts=30, 
         # dynamics, steering angle, acceleration, speed, traj bounds
-        constraint_weights=[100, 50, 0.01, 0.001, 0.1, 0.1], 
+        constraint_weights=[500, 50, 10, 1, 100, 100], 
         max_n_opts=200, 
         lr=5e-1
     )
 
-    plot_trajs(res['trajs_init'], res['d_trajs_init'], title='{} | Init'.format(args.tag), save=os.path.join(savedir, 'init.png'))
-    plot_trajs(res['trajs'], res['d_trajs'], title='{} | Final'.format(args.tag), save=os.path.join(savedir, 'final.png'))
+    plot_trajs(wps, res['trajs_init'], res['d_trajs_init'], title='{} | Init'.format(args.tag), save=os.path.join(savedir, 'init.png'))
+    plot_trajs(wps, res['trajs'], res['d_trajs'], title='{} | Final'.format(args.tag), save=os.path.join(savedir, 'final.png'))
 
     import IPython; IPython.embed(); exit(0)
