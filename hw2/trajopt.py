@@ -72,23 +72,20 @@ def trajopt(wps, writer, n_pts=40, constraint_weights=[0.01, 1, 0.0001, 0.001, 0
     constraint_weights = from_numpy(np.array(constraint_weights))
     wps_init = tensor(wps, requires_grad=True)
     wp_speeds_init = tensor(np.ones(len(wps) - 2) * 30, requires_grad=True)
-    seg_times_init = tensor(np.ones(len(wps) - 1) * 10, requires_grad=True)
+    seg_times_init = tensor(np.ones(len(wps) - 1) * 20, requires_grad=True)
 
     # define bounds
     wps_delta = from_numpy(np.array([CS['waypoint_tol'], CS['waypoint_tol'], np.deg2rad(CS['angle_tol'])]))
     wps_lo, wps_hi = wps_init - wps_delta, wps_init + wps_delta
-
     seg_times_lo = from_numpy(np.linalg.norm(wps[1:, :2] - wps[:-1, :2], axis=1) / CS['max_vel'])
-
-    wp_speed_lo, wp_speed_hi = from_numpy(np.array(0)), from_numpy(np.array(CS['max_vel']))
-
+    wp_speed_lo = from_numpy(np.array(0))
     trajs_lo, trajs_hi = from_numpy(CS['xyp_lims_lo']), from_numpy(CS['xyp_lims_hi'])
 
     # define optimizers
     opts = {
         'wps': Adam(wps_init.flatten(), alpha=lr, lo=wps_lo.flatten(), hi=wps_hi.flatten()),
         'seg_times': Adam(seg_times_init, alpha=lr, lo=seg_times_lo),
-        'wp_speeds': Adam(wp_speeds_init, alpha=lr, lo=wp_speed_lo, hi=wp_speed_hi)
+        'wp_speeds': Adam(wp_speeds_init, alpha=lr, lo=wp_speed_lo)
     }
 
     n_opts = trange(max_n_opts)
@@ -217,9 +214,9 @@ if __name__ == "__main__":
     res = trajopt(wps, writer,
         n_pts=20, 
         # dynamics, steering angle, acceleration, speed, traj bounds
-        constraint_weights=[10, 1, 0.01, 0.001, 0.1, 0.1], 
+        constraint_weights=[100, 100, 0.01, 0.001, 0.1, 0.1], 
         max_n_opts=100000, 
-        lr=1e-2
+        lr=1e-1
     )
 
     import IPython; IPython.embed(); exit(0)
