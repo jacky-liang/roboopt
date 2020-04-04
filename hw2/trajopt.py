@@ -2,6 +2,8 @@ import os
 import argparse
 
 import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib import collections  as mc
 import torch
 from torch.autograd import grad
 from torch_utils import from_numpy, get_numpy, ones, tensor, zeros_like
@@ -11,6 +13,52 @@ from tqdm import tqdm, trange
 
 from constants import CS
 from adam import Adam
+
+
+def plot_trajs(trajs, d_trajs, title='', save=None, show=False):
+    plt.figure(figsize=(15, 15))
+    ax = plt.gca()
+
+    for i, traj in enumerate(trajs):
+        plt.scatter(traj[:,0], traj[:,1])
+
+        for j, pt in enumerate(traj):
+            d_pt = d_trajs[i, j] * 0.05
+            ax.arrow(pt[0], pt[1], d_pt[0], d_pt[1], head_width=0.2, head_length=0.2)
+
+    arrow_length = 0.8
+
+    plt.scatter(wps[:, 0], wps[:, 1])
+    for i, wp in enumerate(wps):
+        tip = arrow_length * np.array([np.cos(wp[2]), np.sin(wp[2])])
+        ax.arrow(wp[0], wp[1], tip[0], tip[1], head_width=0.3, head_length=0.3)
+
+        ax.text(wp[0] * 1.03, wp[1] * 1.03, '{}'.format(i), fontsize=15)
+
+    lines = [
+        [(CS['x_lim'][0], CS['y_lim'][0]), (CS['x_lim'][0], CS['y_lim'][1])], 
+        [(CS['x_lim'][0], CS['y_lim'][0]), (CS['x_lim'][1], CS['y_lim'][0])], 
+        [(CS['x_lim'][1], CS['y_lim'][1]), (CS['x_lim'][0], CS['y_lim'][1])], 
+        [(CS['x_lim'][1], CS['y_lim'][1]), (CS['x_lim'][1], CS['y_lim'][0])], 
+        [(CS['xp_lim'][0], CS['yp_lim'][0]), (CS['xp_lim'][0], CS['yp_lim'][1])], 
+        [(CS['xp_lim'][0], CS['yp_lim'][0]), (CS['xp_lim'][1], CS['yp_lim'][0])], 
+        [(CS['xp_lim'][1], CS['yp_lim'][1]), (CS['xp_lim'][0], CS['yp_lim'][1])], 
+        [(CS['xp_lim'][1], CS['yp_lim'][1]), (CS['xp_lim'][1], CS['yp_lim'][0])], 
+    ]
+    lc = mc.LineCollection(lines, linewidths=2)
+    ax.add_collection(lc)
+
+    plt.xlabel('X')
+    plt.ylabel('Y')
+    plt.xlim(CS['xp_lim'] * 1.1)
+    plt.ylim(CS['yp_lim'] * 1.1)
+    plt.title(title)
+
+    ax.set_aspect('equal')
+    if save is not None:
+        plt.savefig(save)
+    if show:
+        plt.show()
 
 
 def cubic_hermite(ts, x0, x1, v0, v1):
@@ -72,7 +120,7 @@ def trajopt(wps, writer, n_pts=40, constraint_weights=[0.01, 1, 0.0001, 0.001, 0
     constraint_weights = from_numpy(np.array(constraint_weights))
     wps_init = tensor(wps, requires_grad=True)
     wp_speeds_init = tensor(np.ones(len(wps) - 2) * 30, requires_grad=True)
-    seg_times_init = tensor(np.ones(len(wps) - 1) * 20, requires_grad=True)
+    seg_times_init = tensor(np.ones(len(wps) - 1) * 30, requires_grad=True)
 
     # define bounds
     wps_delta = from_numpy(np.array([CS['waypoint_tol'], CS['waypoint_tol'], np.deg2rad(CS['angle_tol'])]))
@@ -96,6 +144,8 @@ def trajopt(wps, writer, n_pts=40, constraint_weights=[0.01, 1, 0.0001, 0.001, 0
 
         # compute trajs
         trajs, d_trajs = gen_trajs(wps, wp_speeds, n_pts)
+        if n_opt == 0:
+            trajs_init, d_trajs_init = get_numpy(trajs), get_numpy(d_trajs)
 
         # compute needed values
         velocities = d_trajs / torch.unsqueeze(torch.unsqueeze(seg_times, 1), 1)
@@ -175,6 +225,8 @@ def trajopt(wps, writer, n_pts=40, constraint_weights=[0.01, 1, 0.0001, 0.001, 0
         'wps': get_numpy(opts['wps'].params.view(wps_init.shape)),
         'wp_speeds': get_numpy(opts['wp_speeds'].params),
         'seg_times': get_numpy(opts['seg_times'].params),
+        'trajs_init': trajs_init,
+        'd_trajs_init': d_trajs_init,
         'trajs': get_numpy(trajs),
         'd_trajs': get_numpy(d_trajs),
         'velocities': get_numpy(velocities),
@@ -196,6 +248,10 @@ if __name__ == "__main__":
     parser.add_argument('--tag', '-t', type=str, required=True)
     args = parser.parse_args()
 
+    savedir = os.path.join(args.logdir, args.tag)
+    if not os.path.isdir(savedir):
+        os.makedirs(savedir)
+
     wps = np.array([
             [0, 0, 0],
             [ 8.62844369,  4.89809566,  1.53850753],
@@ -212,11 +268,14 @@ if __name__ == "__main__":
 
     writer = SummaryWriter(log_dir=os.path.join(args.logdir, 'tb', args.tag))
     res = trajopt(wps, writer,
-        n_pts=20, 
+        n_pts=30, 
         # dynamics, steering angle, acceleration, speed, traj bounds
-        constraint_weights=[100, 100, 0.01, 0.001, 0.1, 0.1], 
-        max_n_opts=100000, 
-        lr=1e-1
+        constraint_weights=[100, 50, 0.01, 0.001, 0.1, 0.1], 
+        max_n_opts=200, 
+        lr=5e-1
     )
+
+    plot_trajs(res['trajs_init'], res['d_trajs_init'], title='{} | Init'.format(args.tag), save=os.path.join(savedir, 'init.png'))
+    plot_trajs(res['trajs'], res['d_trajs'], title='{} | Final'.format(args.tag), save=os.path.join(savedir, 'final.png'))
 
     import IPython; IPython.embed(); exit(0)
