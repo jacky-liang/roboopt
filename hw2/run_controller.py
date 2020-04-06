@@ -14,6 +14,7 @@ from utils import shortest_angular_distance
 
 from tensorboardX import SummaryWriter
 from trajopt import trajopt, plot_trajs
+import matplotlib.pyplot as plt
 
 
 def waypoint_cb(msg):
@@ -44,11 +45,12 @@ def follow_traj(res):
 
     all_trajs = np.concatenate(res['trajs'])
     all_d_trajs = np.concatenate(res['d_trajs'])
+    speeds = np.concatenate(res['speeds'])
     all_angles = np.arctan2(all_d_trajs[:, 1], all_d_trajs[:, 0])
     all_pts = np.c_[all_trajs, all_angles]
     thresh = np.array([0.1, 0.1, np.deg2rad(1)])
 
-    t = 1
+    t = 0
     while True:
         current_pt = np.array([rear_axle_center.position.x, rear_axle_center.position.y, rear_axle_theta])
 
@@ -59,24 +61,17 @@ def follow_traj(res):
                 break
         t += 1
 
-        acc = np.linalg.norm(all_d_trajs[t] - all_d_trajs[t - 1])
-
         target_pt = all_pts[t]
         error = target_pt - current_pt
         if t == len(all_pts) and np.all(np.abs(error) < thresh):
             break
-        print('==========', t)
 
-        position_err = error[:2]
         angle_err = error[2]
 
-        speed = np.linalg.norm(position_err) * 0.1
-        current_velocity = np.array([rear_axle_velocity.linear.x, rear_axle_velocity.linear.y])
-        current_speed = np.linalg.norm(current_velocity)
+        speed = speeds[t]
+        acc = speeds[t] - speeds[t - 1]
 
-        speed = np.linalg.norm(all_d_trajs[t])
-
-        beta = np.arcsin(np.tanh(angle_err / current_speed))
+        beta = np.arcsin(np.tanh(angle_err / speed))
         steering_angle = np.arctan(2 * np.tan(beta))
         
         cmd = AckermannDriveStamped()
@@ -124,12 +119,25 @@ if __name__ == '__main__':
     res = trajopt(wps, writer, init_vel,
         n_pts=100, 
         # dynamics, steering angle, acceleration, speed, traj bounds
-        constraint_weights=[500, 50, 10, 1, 100, 100], 
+        constraint_weights=[1000, 500, 1000, 1, 100, 100], 
         max_n_opts=200, 
         lr=5e-1
     )
 
-    plot_trajs(wps, res['trajs_init'], res['d_trajs_init'], title='{} | Init'.format(args.tag), save=os.path.join(savedir, 'init.png'))
-    plot_trajs(wps, res['trajs'], res['d_trajs'], title='{} | Final'.format(args.tag), save=os.path.join(savedir, 'final.png'))
+    plot_trajs(wps, res['trajs_init'], res['d_trajs_init'], title='{} | Init: {:.2f}s'.format(args.tag, res['total_time_init']), save=os.path.join(savedir, 'init.png'))
+    plot_trajs(wps, res['trajs'], res['d_trajs'], title='{} | Final: {:.2f}s'.format(args.tag, res['total_time']), save=os.path.join(savedir, 'final.png'))
+
+    import seaborn
+    seaborn.set_style('darkgrid')
+    seaborn.set_context('paper')
+
+    cost_names = ['Time', 'Dynamics Cost', 'Steering Angle COst', 'Acceleration Cost', 'Speed Cost']
+    for i, name in enumerate(cost_names):
+        plt.figure(figsize=(10, 8))
+        plt.plot(res['costs'][:, i])
+        plt.title(name)
+        plt.xlabel('Iteration')
+        plt.ylabel('Cost')
+        plt.savefig(os.path.join(savedir, 'costs_{}.png'.format(name)))
 
     follow_traj(res)

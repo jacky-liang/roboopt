@@ -30,10 +30,10 @@ def plot_trajs(wps, trajs, d_trajs, title='', save=None, show=False):
 
     plt.scatter(wps[:, 0], wps[:, 1])
     for i, wp in enumerate(wps):
-        tip = arrow_length * np.array([np.cos(wp[2]), np.sin(wp[2])])
-        ax.arrow(wp[0], wp[1], tip[0], tip[1], head_width=0.3, head_length=0.3)
-
         ax.text(wp[0] * 1.03, wp[1] * 1.03, '{}'.format(i), fontsize=15)
+        if i > 0 and i < len(wps) - 1:
+            tip = arrow_length * np.array([np.cos(wp[2]), np.sin(wp[2])])
+            ax.arrow(wp[0], wp[1], tip[0], tip[1], head_width=0.3, head_length=0.3)
 
     lines = [
         [(CS['x_lim'][0], CS['y_lim'][0]), (CS['x_lim'][0], CS['y_lim'][1])], 
@@ -96,7 +96,7 @@ def gen_trajs(wps, wp_speeds, init_vel, n_pts):
     vs = torch.stack([torch.cos(wps[:,2]), torch.sin(wps[:,2])]).transpose(0, 1)
     vs[0] = init_vel
     vs[1:-1] *= torch.unsqueeze(wp_speeds, 1)
-    vs[-1] *= 1e-2
+    vs[-1] *= 1
     
     # TODO: batch this
     for i in range(1, len(wps)):
@@ -127,16 +127,16 @@ def trajopt(wps, writer, init_vel=[0, 0.01], n_pts=40, constraint_weights=[0.01,
     wps_delta = from_numpy(np.array([CS['waypoint_tol'], CS['waypoint_tol'], np.deg2rad(CS['angle_tol'])]))
     wps_lo, wps_hi = wps_init - wps_delta, wps_init + wps_delta
     seg_times_lo = from_numpy(np.linalg.norm(wps[1:, :2] - wps[:-1, :2], axis=1) / CS['max_vel'])
-    wp_speed_lo = from_numpy(np.array(0))
     trajs_lo, trajs_hi = from_numpy(CS['xyp_lims_lo']), from_numpy(CS['xyp_lims_hi'])
 
     # define optimizers
     opts = {
         'wps': Adam(wps_init.flatten(), alpha=lr, lo=wps_lo.flatten(), hi=wps_hi.flatten()),
         'seg_times': Adam(seg_times_init, alpha=lr, lo=seg_times_lo),
-        'wp_speeds': Adam(wp_speeds_init, alpha=lr, lo=wp_speed_lo)
+        'wp_speeds': Adam(wp_speeds_init, alpha=lr)
     }
 
+    costs = []
     n_opts = trange(max_n_opts)
     for n_opt in n_opts:
         wps = opts['wps'].params.view(wps_init.shape)
@@ -147,6 +147,7 @@ def trajopt(wps, writer, init_vel=[0, 0.01], n_pts=40, constraint_weights=[0.01,
         trajs, d_trajs = gen_trajs(wps, wp_speeds, init_vel, n_pts)
         if n_opt == 0:
             trajs_init, d_trajs_init = get_numpy(trajs), get_numpy(d_trajs)
+            total_time_init = get_numpy(torch.sum(seg_times))
 
         # compute needed values
         velocities = d_trajs / torch.unsqueeze(torch.unsqueeze(seg_times, 1), 1)
@@ -182,6 +183,7 @@ def trajopt(wps, writer, init_vel=[0, 0.01], n_pts=40, constraint_weights=[0.01,
 
         constraint_cost = constraint_costs @ constraint_weights
         loss = total_time + constraint_cost
+        costs.append(np.concatenate([[get_numpy(total_time)], get_numpy(constraint_costs)]))
 
         # Compute grad
         grad_wps, grad_seg_times, grad_wp_speeds = grad(loss, [wps, seg_times, wp_speeds])
@@ -236,8 +238,10 @@ def trajopt(wps, writer, init_vel=[0, 0.01], n_pts=40, constraint_weights=[0.01,
         'steering_angles': get_numpy(steering_angles),
         'velocities_pred': get_numpy(velocities_pred),
         'betas': get_numpy(betas),
+        'total_time_init': total_time_init,
         'total_time': get_numpy(total_time),
         'loss': get_numpy(loss),
+        'costs': np.array(costs),
         'constraint_costs': get_numpy(constraint_costs),
         'constraint_cost': get_numpy(constraint_cost)
     }
@@ -271,12 +275,21 @@ if __name__ == "__main__":
     res = trajopt(wps, writer,
         n_pts=30, 
         # dynamics, steering angle, acceleration, speed, traj bounds
-        constraint_weights=[500, 50, 10, 1, 100, 100], 
-        max_n_opts=200, 
+        constraint_weights=[1000, 500, 1000, 1, 100, 100], 
+        max_n_opts=300, 
         lr=5e-1
     )
 
-    plot_trajs(wps, res['trajs_init'], res['d_trajs_init'], title='{} | Init'.format(args.tag), save=os.path.join(savedir, 'init.png'))
-    plot_trajs(wps, res['trajs'], res['d_trajs'], title='{} | Final'.format(args.tag), save=os.path.join(savedir, 'final.png'))
+    plot_trajs(wps, res['trajs_init'], res['d_trajs_init'], title='{} | Init: {:.2f}s'.format(args.tag, res['total_time_init']), save=os.path.join(savedir, 'init.png'))
+    plot_trajs(wps, res['trajs'], res['d_trajs'], title='{} | Final: {:.2f}s'.format(args.tag, res['total_time']), save=os.path.join(savedir, 'final.png'))
+
+    cost_names = ['Time', 'Dynamics Cost', 'Steering Angle COst', 'Acceleration Cost', 'Speed Cost']
+    for i, name in enumerate(cost_names):
+        plt.figure(figsize=(10, 8))
+        plt.plot(res['costs'][:, i])
+        plt.title(name)
+        plt.xlabel('Iteration')
+        plt.ylabel('Cost')
+        plt.savefig(os.path.join(savedir, 'costs_{}.png'.format(name)))
 
     import IPython; IPython.embed(); exit(0)
