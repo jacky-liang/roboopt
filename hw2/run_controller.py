@@ -89,7 +89,7 @@ def follow_traj(res):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--logdir', '-l', type=str, default='outs')
-    parser.add_argument('--tag', '-t', type=str, required=True)
+    parser.add_argument('--tag', '-t', type=str, default='0')
     args = parser.parse_args()
     
     savedir = os.path.join(args.logdir, args.tag)
