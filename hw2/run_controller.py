@@ -119,8 +119,8 @@ if __name__ == '__main__':
     res = trajopt(wps, writer, init_vel,
         n_pts=100, 
         # dynamics, steering angle, acceleration, speed, traj bounds
-        constraint_weights=[1000, 500, 1000, 1, 100, 100], 
-        max_n_opts=200, 
+        constraint_weights=[1000, 500, 1000, 1, 100], 
+        max_n_opts=400, 
         lr=5e-1
     )
 
@@ -131,7 +131,7 @@ if __name__ == '__main__':
     seaborn.set_style('darkgrid')
     seaborn.set_context('paper')
 
-    cost_names = ['Time', 'Dynamics Cost', 'Steering Angle COst', 'Acceleration Cost', 'Speed Cost']
+    cost_names = ['Time', 'Dynamics Cost', 'Steering Angle Cost', 'Acceleration Cost', 'Speed Cost', 'Traj Cost']
     for i, name in enumerate(cost_names):
         plt.figure(figsize=(10, 8))
         plt.plot(res['costs'][:, i])
