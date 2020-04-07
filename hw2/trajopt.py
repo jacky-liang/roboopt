@@ -157,7 +157,9 @@ def trajopt(wps, writer, init_vel=[0, 0.01], n_pts=40, constraint_weights=[0.01,
 
         angles = torch.atan2(d_trajs[:,:,1], d_trajs[:,:,0])
         betas = torch.asin(torch.tanh(CS['wheelbase'] / 2 * angles / speeds))
+        # betas = torch.atan2(d_trajs[:,:,1], d_trajs[:,:,0])
         steering_angles = torch.atan(2 * torch.tan(betas))
+        # angles = torch.sin(betas) * 2 / CS['wheelbase'] * speeds
 
         velocities_pred = torch.unsqueeze(speeds, 2) * torch.cat([
                                                                 torch.unsqueeze(torch.cos(angles + betas), 2), 
@@ -171,14 +173,13 @@ def trajopt(wps, writer, init_vel=[0, 0.01], n_pts=40, constraint_weights=[0.01,
             # dynamics
             torch.norm(velocities_pred - velocities),
             # steering angle
-            torch.sum(torch.relu(torch.pow(steering_angles, 2) - CS['max_steering_angle']**2)),
+            torch.sum(torch.pow(torch.relu(steering_angles- CS['max_steering_angle']), 2)),
             # acceleration
-            torch.sum(torch.relu(torch.pow(accelerations, 2) - CS['max_acc']**2)),
+            torch.sum(torch.pow(torch.relu(accelerations - CS['max_acc']), 2)),
             # speed
             torch.sum(torch.relu(torch.pow(speeds, 2) - CS['max_vel']**2)),
             # traj bounds
-            torch.norm(torch.relu(trajs - trajs_hi)),
-            torch.norm(torch.relu(-trajs + trajs_lo))    
+            torch.sum(torch.pow(torch.relu(trajs - trajs_hi) + torch.relu(-trajs + trajs_lo), 2))
         ])
 
         constraint_cost = constraint_costs @ constraint_weights
@@ -209,7 +210,7 @@ def trajopt(wps, writer, init_vel=[0, 0.01], n_pts=40, constraint_weights=[0.01,
         writer.add_scalar('/costs/steering_angle', constraint_costs[1], n_opt)
         writer.add_scalar('/costs/acceleration', constraint_costs[2], n_opt)
         writer.add_scalar('/costs/speed', constraint_costs[3], n_opt)
-        writer.add_scalar('/costs/traj_bounds', constraint_costs[4] + constraint_costs[5], n_opt)
+        writer.add_scalar('/costs/traj_bounds', constraint_costs[4], n_opt)
         writer.add_scalar('/grads/wps', grad_wps.mean(), n_opt)
         writer.add_scalar('/grads/seg_times', grad_seg_times.mean(), n_opt)
         writer.add_scalar('/grads/wp_speeds', grad_wp_speeds.mean(), n_opt)
@@ -275,15 +276,15 @@ if __name__ == "__main__":
     res = trajopt(wps, writer,
         n_pts=30, 
         # dynamics, steering angle, acceleration, speed, traj bounds
-        constraint_weights=[1000, 500, 1000, 1, 100, 100], 
-        max_n_opts=300, 
-        lr=5e-1
+        constraint_weights=[1000, 500, 1000, 1, 100], 
+        max_n_opts=400, 
+        lr=0.5
     )
 
     plot_trajs(wps, res['trajs_init'], res['d_trajs_init'], title='{} | Init: {:.2f}s'.format(args.tag, res['total_time_init']), save=os.path.join(savedir, 'init.png'))
     plot_trajs(wps, res['trajs'], res['d_trajs'], title='{} | Final: {:.2f}s'.format(args.tag, res['total_time']), save=os.path.join(savedir, 'final.png'))
 
-    cost_names = ['Time', 'Dynamics Cost', 'Steering Angle COst', 'Acceleration Cost', 'Speed Cost']
+    cost_names = ['Time', 'Dynamics Cost', 'Steering Angle Cost', 'Acceleration Cost', 'Speed Cost', 'Traj Cost']
     for i, name in enumerate(cost_names):
         plt.figure(figsize=(10, 8))
         plt.plot(res['costs'][:, i])
